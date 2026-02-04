@@ -12,6 +12,7 @@ from PIL import Image
 import json
 import os
 from storage import save_detection_event, get_recent_events, get_event_by_id, get_storage_stats, EVENTS_DIR
+from csv_logger import event_logger
 
 app = Flask(__name__)
 
@@ -184,14 +185,14 @@ def detect_annotated():
                     'bbox': {'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2}
                 })
         
-        # Convert annotated image to base64
+        # Convert annotated image to base64 (for dashboard display)
         _, buffer = cv2.imencode('.jpg', annotated_frame)
         img_base64 = base64.b64encode(buffer).decode('utf-8')
         
-        # If recording, add frame to video
+        # If recording, add RAW frame (WITHOUT annotations) to video
         global video_recording, video_frames
         if video_recording:
-            video_frames.append(annotated_frame.copy())
+            video_frames.append(frame.copy())  # Save original frame without green boxes
         
         # Count objects
         counts = {}
@@ -254,6 +255,9 @@ def detect_annotated():
                 new_detections,  # Only save new detections
                 alert_level
             )
+            
+            # Log ALL detections to CSV (real-time logging)
+            event_logger.log_detection(detections, alert_level)
         
         return jsonify({
             'success': True,
@@ -383,7 +387,8 @@ def record_snapshot():
 video_writer = None
 video_recording = False
 video_filename = None
-video_frames = []
+video_frames = []  # For RAW frames (without annotations)
+video_frames_annotated = []  # For dashboard display (with green boxes)
 
 @app.route('/start_recording', methods=['POST'])
 def start_recording():
@@ -402,6 +407,9 @@ def start_recording():
         video_recording = True
         video_frames = []
         
+        # Log to CSV
+        event_logger.log_custom_event('RECORDING_START', f'Video recording started: {video_filename}')
+        
         return jsonify({
             'success': True,
             'message': 'Recording started',
@@ -416,7 +424,7 @@ def start_recording():
 
 @app.route('/stop_recording', methods=['POST'])
 def stop_recording():
-    """Stop recording and save video"""
+    """Stop recording and save video (RAW - no annotations)"""
     global video_recording, video_filename, video_frames, video_writer
     
     try:
@@ -434,7 +442,7 @@ def stop_recording():
                 'error': 'No frames captured'
             }), 400
         
-        # Save video file
+        # Save RAW video file (without green boxes)
         height, width = video_frames[0].shape[:2]
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(video_filename, fourcc, 10.0, (width, height))
@@ -443,6 +451,7 @@ def stop_recording():
             out.write(frame)
         
         out.release()
+        frames_count = len(video_frames)
         video_frames = []
         
         # Upload to Cloudinary
@@ -459,13 +468,23 @@ def stop_recording():
         
         file_size = os.path.getsize(video_filename)
         
+        # Log to CSV
+        event_logger.log_custom_event(
+            'RECORDING_STOP',
+            f'Video saved: {frames_count} frames, {file_size} bytes, Cloud: {cloud_url}'
+        )
+        
+        # Upload CSV log to Cloudinary
+        csv_url = event_logger.upload_to_cloudinary()
+        
         return jsonify({
             'success': True,
             'message': 'Recording saved',
             'filename': video_filename,
-            'frames': len(video_frames),
+            'frames': frames_count,
             'size': file_size,
-            'cloudinary_url': cloud_url
+            'cloudinary_url': cloud_url,
+            'csv_url': csv_url
         })
     
     except Exception as e:
@@ -484,6 +503,48 @@ def recording_status():
         'filename': video_filename if video_recording else None
     })
 
+@app.route('/download_csv', methods=['GET'])
+def download_csv():
+    """Download current CSV event log"""
+    try:
+        csv_file = event_logger.get_current_log_file()
+        if os.path.exists(csv_file):
+            return send_file(
+                csv_file,
+                mimetype='text/csv',
+                as_attachment=True,
+                download_name=f'events_{time.strftime("%Y%m%d_%H%M%S")}.csv'
+            )
+        else:
+            return jsonify({'error': 'No log file found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/csv_status', methods=['GET'])
+def csv_status():
+    """Get CSV log status"""
+    try:
+        csv_file = event_logger.get_current_log_file()
+        if os.path.exists(csv_file):
+            file_size = os.path.getsize(csv_file)
+            # Count lines
+            with open(csv_file, 'r') as f:
+                line_count = sum(1 for _ in f) - 1  # Subtract header
+            
+            return jsonify({
+                'success': True,
+                'file': csv_file,
+                'size': file_size,
+                'events': line_count
+            })
+        else:
+            return jsonify({'error': 'No log file'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
+    # Log system start
+    event_logger.log_custom_event('SYSTEM_START', 'Campus Guardian Drone system started')
+    
     # For local testing
     app.run(host='0.0.0.0', port=8080, debug=False)

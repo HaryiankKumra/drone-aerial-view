@@ -135,6 +135,45 @@ def upload_video(video_file_path, event_id, folder='campus-guardian/videos'):
         print(f"Error uploading video to Cloudinary: {e}")
         return None
 
+def upload_csv(csv_file_path, event_id, folder='campus-guardian/logs'):
+    """
+    Upload CSV/Excel file to Cloudinary
+    
+    Args:
+        csv_file_path: Path to CSV file
+        event_id: Unique event identifier
+        folder: Cloudinary folder path
+    
+    Returns:
+        dict with file details or None if failed
+    """
+    if not is_configured():
+        return None
+    
+    try:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        public_id = f"log_{event_id}_{timestamp}"
+        
+        result = cloudinary.uploader.upload(
+            csv_file_path,
+            public_id=public_id,
+            folder=folder,
+            resource_type='raw',  # For non-image files like CSV
+            format='csv'
+        )
+        
+        return {
+            'url': result.get('url'),
+            'secure_url': result.get('secure_url'),
+            'public_id': result.get('public_id'),
+            'bytes': result.get('bytes'),
+            'format': result.get('format')
+        }
+    
+    except Exception as e:
+        print(f"Error uploading CSV to Cloudinary: {e}")
+        return None
+
 def get_optimized_url(public_id, width=None, height=None, quality='auto:good'):
     """
     Get optimized delivery URL for an image
