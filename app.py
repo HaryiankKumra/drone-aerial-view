@@ -2,7 +2,7 @@
 Flask API for Aerial Drone Surveillance - FREE Deployment Ready
 Receives images from camera, runs YOLOv8 detection, returns results
 """
-from flask import Flask, request, jsonify, render_template, Response
+from flask import Flask, request, jsonify, render_template, Response, send_file
 from ultralytics import YOLO
 import cv2
 import numpy as np
@@ -10,6 +10,8 @@ import base64
 from io import BytesIO
 from PIL import Image
 import json
+import os
+from storage import save_detection_event, get_recent_events, get_event_by_id, get_storage_stats, EVENTS_DIR
 
 app = Flask(__name__)
 
@@ -169,12 +171,38 @@ def detect_annotated():
         for det in detections:
             counts[det['class']] = counts.get(det['class'], 0) + 1
         
+        # Auto-save if recording enabled or high-priority detection
+        should_save = False
+        alert_level = 'info'
+        
+        # Save if people detected
+        people_count = counts.get('pedestrian', 0) + counts.get('people', 0)
+        if people_count > 0:
+            should_save = True
+            if people_count > 5:
+                alert_level = 'warning'
+        
+        # Save if vehicles detected
+        if counts.get('car', 0) > 0 or counts.get('truck', 0) > 0:
+            should_save = True
+        
+        # Save event to storage
+        event = None
+        if should_save:
+            event = save_detection_event(
+                f'data:image/jpeg;base64,{img_base64}',
+                detections,
+                alert_level
+            )
+        
         return jsonify({
             'success': True,
             'annotated_image': f'data:image/jpeg;base64,{img_base64}',
             'detections': detections,
             'total_objects': len(detections),
-            'counts': counts
+            'counts': counts,
+            'saved': should_save,
+            'event_id': event['id'] if event else None
         })
     
     except Exception as e:
@@ -182,6 +210,51 @@ def detect_annotated():
             'success': False,
             'error': str(e)
         }), 500
+
+@app.route('/events', methods=['GET'])
+def get_events():
+    """Get recent saved events"""
+    limit = request.args.get('limit', 50, type=int)
+    events = get_recent_events(limit)
+    return jsonify({
+        'success': True,
+        'events': events,
+        'total': len(events)
+    })
+
+@app.route('/event/<event_id>', methods=['GET'])
+def get_event(event_id):
+    """Get specific event details"""
+    event = get_event_by_id(event_id)
+    if event:
+        return jsonify({
+            'success': True,
+            'event': event
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'error': 'Event not found'
+        }), 404
+
+@app.route('/event/<event_id>/image', methods=['GET'])
+def get_event_image(event_id):
+    """Get event image file"""
+    event = get_event_by_id(event_id)
+    if event:
+        image_path = os.path.join(EVENTS_DIR, event['image'])
+        if os.path.exists(image_path):
+            return send_file(image_path, mimetype='image/jpeg')
+    return jsonify({'error': 'Image not found'}), 404
+
+@app.route('/storage/stats', methods=['GET'])
+def storage_stats():
+    """Get storage statistics"""
+    stats = get_storage_stats()
+    return jsonify({
+        'success': True,
+        'stats': stats
+    })
 
 if __name__ == '__main__':
     # For local testing
