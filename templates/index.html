@@ -651,6 +651,18 @@
                         </svg>
                         Record
                     </button>
+                    <button class="btn btn-secondary" id="recordVideoBtn" style="display: none;">
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="10" fill="red"></circle>
+                        </svg>
+                        <span id="recordVideoText">Start Recording</span>
+                    </button>
+                    <button class="btn btn-danger" id="stopVideoBtn" style="display: none;">
+                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <rect x="6" y="6" width="12" height="12" stroke-width="2"></rect>
+                        </svg>
+                        Stop Recording
+                    </button>
                 </div>
             </div>
             
@@ -1055,7 +1067,73 @@
             }
         }
         
+        // Video recording
+        let isRecordingVideo = false;
+        
+        async function startVideoRecording() {
+            try {
+                const response = await fetch('/start_recording', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    isRecordingVideo = true;
+                    recordVideoBtn.style.display = 'none';
+                    stopVideoBtn.style.display = 'flex';
+                    addLog('🎥 Video recording started');
+                } else {
+                    addLog('ERROR: ' + data.error, true);
+                }
+            } catch (err) {
+                addLog('ERROR: ' + err.message, true);
+            }
+        }
+        
+        async function stopVideoRecording() {
+            try {
+                const response = await fetch('/stop_recording', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    isRecordingVideo = false;
+                    recordVideoBtn.style.display = 'flex';
+                    stopVideoBtn.style.display = 'none';
+                    
+                    const sizeMB = (data.size / 1024 / 1024).toFixed(2);
+                    addLog(`✓ Video saved! ${sizeMB}MB`);
+                    
+                    if (data.cloudinary_url) {
+                        addLog(`☁️  Uploaded: ${data.cloudinary_url.substring(0, 50)}...`);
+                    }
+                } else {
+                    addLog('ERROR: ' + data.error, true);
+                }
+            } catch (err) {
+                addLog('ERROR: ' + err.message, true);
+            }
+        }
+        
         // Event listeners
+        const recordVideoBtn = document.getElementById('recordVideoBtn');
+        const stopVideoBtn = document.getElementById('stopVideoBtn');
+        
+        startBtn.addEventListener('click', () => {
+            startBtn.style.display = 'none';
+            stopBtn.style.display = 'flex';
+            recordVideoBtn.style.display = 'flex';
+            startDetection();
+        });
+        
+        stopBtn.addEventListener('click', () => {
+            stopBtn.style.display = 'none';
+            startBtn.style.display = 'flex';
+            recordVideoBtn.style.display = 'none';
+            if (isRecordingVideo) stopVideoRecording();
+            stopDetection();
+        });
+        
+        recordVideoBtn.addEventListener('click', startVideoRecording);
+        stopVideoBtn.addEventListener('click', stopVideoRecording);
+        
         startBtn.addEventListener('click', startDetection);
         stopBtn.addEventListener('click', stopDetection);
         recordBtn.addEventListener('click', recordSnapshot);

@@ -188,6 +188,11 @@ def detect_annotated():
         _, buffer = cv2.imencode('.jpg', annotated_frame)
         img_base64 = base64.b64encode(buffer).decode('utf-8')
         
+        # If recording, add frame to video
+        global video_recording, video_frames
+        if video_recording:
+            video_frames.append(annotated_frame.copy())
+        
         # Count objects
         counts = {}
         for det in detections:
@@ -373,6 +378,111 @@ def record_snapshot():
             'success': False,
             'error': str(e)
         }), 500
+
+# Video recording state
+video_writer = None
+video_recording = False
+video_filename = None
+video_frames = []
+
+@app.route('/start_recording', methods=['POST'])
+def start_recording():
+    """Start recording live video"""
+    global video_recording, video_filename, video_frames
+    
+    try:
+        if video_recording:
+            return jsonify({
+                'success': False,
+                'error': 'Recording already in progress'
+            }), 400
+        
+        timestamp = time.strftime('%Y%m%d_%H%M%S')
+        video_filename = os.path.join(EVENTS_DIR, f'recording_{timestamp}.mp4')
+        video_recording = True
+        video_frames = []
+        
+        return jsonify({
+            'success': True,
+            'message': 'Recording started',
+            'filename': video_filename
+        })
+    
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/stop_recording', methods=['POST'])
+def stop_recording():
+    """Stop recording and save video"""
+    global video_recording, video_filename, video_frames, video_writer
+    
+    try:
+        if not video_recording:
+            return jsonify({
+                'success': False,
+                'error': 'No recording in progress'
+            }), 400
+        
+        video_recording = False
+        
+        if len(video_frames) == 0:
+            return jsonify({
+                'success': False,
+                'error': 'No frames captured'
+            }), 400
+        
+        # Save video file
+        height, width = video_frames[0].shape[:2]
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(video_filename, fourcc, 10.0, (width, height))
+        
+        for frame in video_frames:
+            out.write(frame)
+        
+        out.release()
+        video_frames = []
+        
+        # Upload to Cloudinary
+        from cloudinary_storage import upload_video
+        cloud_url = None
+        
+        try:
+            cloud_result = upload_video(video_filename, f'recording_{time.strftime("%Y%m%d_%H%M%S")}')
+            if cloud_result:
+                cloud_url = cloud_result['secure_url']
+                print(f"✅ Video uploaded to Cloudinary: {cloud_url}")
+        except Exception as e:
+            print(f"⚠️  Could not upload video to Cloudinary: {e}")
+        
+        file_size = os.path.getsize(video_filename)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Recording saved',
+            'filename': video_filename,
+            'frames': len(video_frames),
+            'size': file_size,
+            'cloudinary_url': cloud_url
+        })
+    
+    except Exception as e:
+        video_recording = False
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/recording_status', methods=['GET'])
+def recording_status():
+    """Get current recording status"""
+    return jsonify({
+        'recording': video_recording,
+        'frames': len(video_frames),
+        'filename': video_filename if video_recording else None
+    })
 
 if __name__ == '__main__':
     # For local testing
