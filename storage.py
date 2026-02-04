@@ -1,6 +1,6 @@
 """
 Event Recording and Storage Module
-Saves images when motion/objects detected
+Saves images to Cloudinary (cloud) + Local backup
 """
 import os
 import json
@@ -8,8 +8,9 @@ from datetime import datetime
 import cv2
 import base64
 import numpy as np
+from cloudinary_storage import upload_detection_image, is_configured as cloudinary_configured
 
-# Storage directories
+# Storage directories (local backup)
 RECORDINGS_DIR = 'recordings'
 EVENTS_DIR = os.path.join(RECORDINGS_DIR, 'events')
 METADATA_FILE = os.path.join(RECORDINGS_DIR, 'events.json')
@@ -19,7 +20,7 @@ os.makedirs(EVENTS_DIR, exist_ok=True)
 
 def save_detection_event(image_base64, detections, alert_level='info'):
     """
-    Save detected frame with metadata
+    Save detected frame with metadata to Cloudinary + local backup
     
     Args:
         image_base64: Base64 encoded image
@@ -32,15 +33,24 @@ def save_detection_event(image_base64, detections, alert_level='info'):
     timestamp = datetime.now()
     event_id = timestamp.strftime('%Y%m%d_%H%M%S_%f')
     
-    # Decode and save image
+    # Clean base64
     if ',' in image_base64:
         image_base64 = image_base64.split(',')[1]
     
+    # Upload to Cloudinary (permanent cloud storage)
+    cloudinary_url = None
+    if cloudinary_configured():
+        cloud_result = upload_detection_image(image_base64, event_id)
+        if cloud_result:
+            cloudinary_url = cloud_result['secure_url']
+            print(f"✅ Uploaded to Cloudinary: {cloudinary_url}")
+    
+    # Also save locally as backup (ephemeral on Render)
     img_data = base64.b64decode(image_base64)
     nparr = np.frombuffer(img_data, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
-    # Save image
+    # Save image locally
     image_filename = f'{event_id}.jpg'
     image_path = os.path.join(EVENTS_DIR, image_filename)
     cv2.imwrite(image_path, img)
@@ -48,6 +58,7 @@ def save_detection_event(image_base64, detections, alert_level='info'):
     # Create event metadata
     event = {
         'id': event_id,
+        'cloudinary_url': cloudinary_url,  # Permanent cloud URL
         'timestamp': timestamp.isoformat(),
         'image': image_filename,
         'detections': detections,

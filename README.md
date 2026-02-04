@@ -1,6 +1,46 @@
-# Aerial Drone Surveillance - Real-Time Object Detection
+# Campus Guardian Drone - Aerial Surveillance System
 
-**Complete solution for TOP-DOWN (aerial/drone) view object detection using YOLOv8 trained on VisDrone dataset.**
+**Professional drone surveillance system with real-time object detection, cloud storage, and web dashboard.**
+
+🎯 Built for **Campus Guardian Drone Hackathon** - Complete aerial monitoring solution under ₹25,000
+
+---
+
+## Live Demo
+🌐 **Dashboard**: https://drone-aerial-view.onrender.com/
+
+---
+
+## Features
+
+### 🚁 Aerial Detection
+- ✓ **YOLOv8-VisDrone** model optimized for top-down views
+- ✓ Detects: pedestrian, bicycle, car, van, truck, bus, motor
+- ✓ Real-time detection with live FPS counter
+- ✓ Object tracking to prevent duplicate alerts
+- ✓ 30-second cooldown for stationary objects
+
+### 📊 Professional Dashboard
+- ✓ Glassmorphism dark theme with cyan accents
+- ✓ Live video feed with detection overlays
+- ✓ Real-time alerts panel with animations
+- ✓ Scan-line radar effects
+- ✓ Manual recording button
+- ✓ Object count statistics
+
+### ☁️ Cloud Storage
+- ✓ **Cloudinary integration** (25GB FREE permanent storage)
+- ✓ Auto-upload detection images to cloud
+- ✓ CDN-optimized delivery
+- ✓ Automatic image optimization
+- ✓ Fallback to local storage
+
+### 🎯 Smart Detection
+- ✓ Object tracking with 50px movement threshold
+- ✓ 30-second alert cooldown for same object
+- ✓ Auto-cleanup of old tracking data
+- ✓ Manual snapshot recording
+- ✓ Event metadata with timestamps
 
 ---
 
