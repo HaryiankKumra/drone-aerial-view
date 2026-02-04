@@ -15,6 +15,22 @@ from storage import save_detection_event, get_recent_events, get_event_by_id, ge
 
 app = Flask(__name__)
 
+def calculate_center(bbox):
+    """Calculate center point of bounding box"""
+    return ((bbox['x1'] + bbox['x2']) / 2, (bbox['y1'] + bbox['y2']) / 2)
+
+def get_distance(point1, point2):
+    """Calculate Euclidean distance between two points"""
+    return ((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)**0.5
+
+def is_same_object(bbox1, bbox2, class1, class2):
+    """Check if two detections are the same object"""
+    if class1 != class2:
+        return False
+    center1 = calculate_center(bbox1)
+    center2 = calculate_center(bbox2)
+    return get_distance(center1, center2) < TRACKING_THRESHOLD
+
 # Load model once at startup
 print("Loading YOLOv8-VisDrone model...")
 model = YOLO('yolov8s-visdrone.pt')
@@ -23,6 +39,12 @@ print("Model loaded successfully!")
 # Configuration
 CONF_THRESHOLD = 0.25
 TARGET_CLASSES = ['pedestrian', 'people', 'bicycle', 'car', 'van', 'truck', 'bus', 'motor']
+
+# Object tracking to prevent duplicate alerts
+tracked_objects = {}
+TRACKING_THRESHOLD = 50  # pixels - objects within this distance are considered same
+ALERT_COOLDOWN = 30  # seconds - minimum time between alerts for same object
+import time
 
 @app.route('/')
 def index():
@@ -171,27 +193,60 @@ def detect_annotated():
         for det in detections:
             counts[det['class']] = counts.get(det['class'], 0) + 1
         
-        # Auto-save if recording enabled or high-priority detection
-        should_save = False
+        # Track objects and prevent duplicate alerts for stationary objects
+        current_time = time.time()
+        new_detections = []
+        
+        for detection in detections:
+            is_new = True
+            detection_key = f"{detection['class']}_{detection['bbox']['x1']}_{detection['bbox']['y1']}"
+            
+            # Check if this is same as any tracked object
+            for tracked_key, tracked_data in list(tracked_objects.items()):
+                if is_same_object(detection['bbox'], tracked_data['bbox'], 
+                                detection['class'], tracked_data['class']):
+                    # Same object - check cooldown
+                    if current_time - tracked_data['last_alert'] < ALERT_COOLDOWN:
+                        is_new = False
+                    else:
+                        # Update alert time
+                        tracked_objects[tracked_key]['last_alert'] = current_time
+                        is_new = True
+                    break
+            
+            if is_new:
+                new_detections.append(detection)
+                # Add to tracked objects
+                tracked_objects[detection_key] = {
+                    'bbox': detection['bbox'],
+                    'class': detection['class'],
+                    'last_alert': current_time,
+                    'first_seen': current_time
+                }
+        
+        # Clean up old tracked objects (not seen for 60 seconds)
+        for key in list(tracked_objects.keys()):
+            if current_time - tracked_objects[key]['last_alert'] > 60:
+                del tracked_objects[key]
+        
+        # Auto-save only for NEW detections
+        should_save = len(new_detections) > 0
         alert_level = 'info'
         
-        # Save if people detected
-        people_count = counts.get('pedestrian', 0) + counts.get('people', 0)
-        if people_count > 0:
-            should_save = True
+        if should_save:
+            # Save if new people detected
+            people_count = sum(1 for d in new_detections if d['class'] in ['pedestrian', 'people'])
             if people_count > 5:
                 alert_level = 'warning'
-        
-        # Save if vehicles detected
-        if counts.get('car', 0) > 0 or counts.get('truck', 0) > 0:
-            should_save = True
+            elif people_count > 10:
+                alert_level = 'critical'
         
         # Save event to storage
         event = None
         if should_save:
             event = save_detection_event(
                 f'data:image/jpeg;base64,{img_base64}',
-                detections,
+                new_detections,  # Only save new detections
                 alert_level
             )
         
@@ -255,6 +310,69 @@ def storage_stats():
         'success': True,
         'stats': stats
     })
+
+@app.route('/record_snapshot', methods=['POST'])
+def record_snapshot():
+    """Manually save current frame"""
+    try:
+        # Handle base64 image
+        if request.is_json:
+            data = request.get_json()
+            image_data = base64.b64decode(data['image'].split(',')[1] if ',' in data['image'] else data['image'])
+            image = Image.open(BytesIO(image_data))
+            frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        else:
+            return jsonify({'error': 'No image provided'}), 400
+
+        # Run detection
+        results = model(frame, conf=CONF_THRESHOLD, verbose=False)[0]
+        
+        # Draw annotations
+        annotated_frame = frame.copy()
+        detections = []
+        
+        for box in results.boxes:
+            cls_id = int(box.cls[0])
+            class_name = model.names[cls_id]
+            
+            if class_name in TARGET_CLASSES:
+                conf = float(box.conf[0])
+                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                
+                color = (0, 255, 0)
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
+                label = f'{class_name}: {conf:.2f}'
+                cv2.putText(annotated_frame, label, (x1, y1 - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                
+                detections.append({
+                    'class': class_name,
+                    'confidence': round(conf, 2),
+                    'bbox': {'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2}
+                })
+        
+        # Convert to base64
+        _, buffer = cv2.imencode('.jpg', annotated_frame)
+        img_base64 = base64.b64encode(buffer).decode('utf-8')
+        
+        # Force save (manual recording)
+        event = save_detection_event(
+            f'data:image/jpeg;base64,{img_base64}',
+            detections,
+            'manual'
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Snapshot saved',
+            'event_id': event['id'] if event else None
+        })
+    
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 if __name__ == '__main__':
     # For local testing

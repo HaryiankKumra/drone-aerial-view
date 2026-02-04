@@ -846,7 +846,8 @@
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             };
-            img.src = 'data:image/jpeg;base64,' + base64Image;
+            // Check if base64Image already has the data URI prefix
+            img.src = base64Image.startsWith('data:') ? base64Image : 'data:image/jpeg;base64,' + base64Image;
         }
         
         // Update statistics
@@ -1004,12 +1005,60 @@
             }
         }
         
+        // Manual recording
+        async function recordSnapshot() {
+            const base64 = captureFrame();
+            if (!base64) {
+                addLog('ERROR: No frame available to record', true);
+                return;
+            }
+            
+            try {
+                recordBtn.disabled = true;
+                recordBtn.innerHTML = `
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;">
+                        <circle cx="12" cy="12" r="2"></circle>
+                    </svg>
+                    Saving...
+                `;
+                
+                const response = await fetch('/record_snapshot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: base64 })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    addLog('✓ Snapshot saved to storage (Event #' + data.event_id + ')');
+                    
+                    // Visual feedback
+                    recordBtn.style.background = 'hsl(var(--alert-success))';
+                    setTimeout(() => {
+                        recordBtn.style.background = '';
+                    }, 1000);
+                } else {
+                    addLog('ERROR: Failed to save snapshot - ' + data.error, true);
+                }
+            } catch (err) {
+                console.error('Recording error:', err);
+                addLog('ERROR: ' + err.message, true);
+            } finally {
+                recordBtn.disabled = false;
+                recordBtn.innerHTML = `
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="4"></circle>
+                    </svg>
+                    Record
+                `;
+            }
+        }
+        
         // Event listeners
         startBtn.addEventListener('click', startDetection);
         stopBtn.addEventListener('click', stopDetection);
-        recordBtn.addEventListener('click', () => {
-            addLog('Recording feature - coming soon!');
-        });
+        recordBtn.addEventListener('click', recordSnapshot);
         
         // Initialize
         initCamera();
