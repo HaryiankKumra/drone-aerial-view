@@ -28,6 +28,7 @@ from csv_logger import event_logger
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 from telemetry.drone_state import DroneState
 from event_engine import EventEngine, TelegramBot
+from geofencing import ZoneManager, ViolationDetector, ViolationLogger, ReturnToHome
 
 app = Flask(__name__)
 
@@ -69,6 +70,13 @@ if telegram_bot.enabled:
         print(f"📱 Telegram: {message}")
     else:
         print(f"⚠️  Telegram: {message}")
+
+# Initialize Geofencing System (Phase-3)
+zone_manager = ZoneManager(db_path='data/zones.db')
+violation_detector = ViolationDetector(zone_manager)
+violation_logger = ViolationLogger(db_path='data/violations.db')
+rth_system = ReturnToHome(home_lat=30.3560, home_lon=76.3649)
+print(f"🛡️  Geofencing system initialized")
 
 
 # Configuration
@@ -112,8 +120,25 @@ def health():
 
 @app.route('/telemetry', methods=['GET'])
 def get_telemetry():
-    """Get current drone telemetry data"""
-    return jsonify(drone_state.get_telemetry())
+    """Get current drone telemetry data with zone violation status"""
+    telemetry = drone_state.get_telemetry()
+    
+    # Check for zone violations
+    violation_result = violation_detector.check_position(
+        telemetry['latitude'],
+        telemetry['longitude'],
+        telemetry['altitude']
+    )
+    
+    # Add violation info to telemetry
+    telemetry['violation'] = violation_result['violation']
+    telemetry['violation_severity'] = violation_result['severity']
+    telemetry['violation_message'] = violation_result['message']
+    
+    # Add RTH status
+    telemetry['rth_active'] = rth_system.rth_active
+    
+    return jsonify(telemetry)
 
 @app.route('/hud', methods=['GET'])
 def get_hud():
@@ -134,14 +159,57 @@ def system_status():
 
 @app.route('/update_location', methods=['POST'])
 def update_location():
-    """Update drone base location from browser geolocation"""
+    """Update drone base location from browser geolocation with violation checking"""
     data = request.get_json()
     latitude = data.get('latitude')
     longitude = data.get('longitude')
     
     if latitude is not None and longitude is not None:
         drone_state.update_location(latitude, longitude)
-        return jsonify({'success': True, 'latitude': latitude, 'longitude': longitude})
+        
+        # Check for zone violations
+        telemetry = drone_state.get_telemetry()
+        violation_result = violation_detector.check_position(
+            latitude, 
+            longitude, 
+            telemetry['altitude']
+        )
+        
+        # If violation detected, log it and trigger RTH if critical
+        if violation_result['violation']:
+            # Log the violation
+            violation_id = violation_logger.log_violation(
+                zone=violation_result['zone'],
+                violation_type=violation_result['violation_type'],
+                severity=violation_result['severity'],
+                drone_lat=latitude,
+                drone_lon=longitude,
+                drone_altitude=telemetry['altitude'],
+                action_taken='RTH_TRIGGERED' if violation_result['severity'] == 'CRITICAL' else 'ALERT_SENT'
+            )
+            
+            # Trigger RTH on critical violations (no-fly zones)
+            if violation_detector.should_trigger_rth(violation_result) and not rth_system.rth_active:
+                rth_info = rth_system.trigger_rth(
+                    current_lat=latitude,
+                    current_lon=longitude,
+                    reason=ReturnToHome.REASON_NO_FLY_VIOLATION,
+                    emergency=True
+                )
+                drone_state.status = 'RETURNING_HOME'
+                print(f"🚨 CRITICAL VIOLATION - RTH TRIGGERED: {violation_result['message']}")
+                
+                # Send Telegram alert for critical violations
+                if telegram_bot.enabled:
+                    alert_message = f"🚨 <b>CRITICAL VIOLATION</b>\n\n{violation_result['message']}\n\nRTH ACTIVATED"
+                    telegram_bot.send_alert(alert_message, severity='CRITICAL')
+        
+        return jsonify({
+            'success': True, 
+            'latitude': latitude, 
+            'longitude': longitude,
+            'violation': violation_result
+        })
     return jsonify({'success': False, 'error': 'Missing latitude or longitude'}), 400
 
 @app.route('/update_temperature', methods=['POST'])
@@ -883,6 +951,232 @@ def test_telegram():
             'message': message,
             'enabled': telegram_bot.enabled
         })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ==================== GEOFENCING ENDPOINTS (Phase-3) ====================
+
+@app.route('/zones/create', methods=['POST'])
+def create_zone():
+    """Create a new geofencing zone"""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        required = ['name', 'zone_type', 'polygon_coords']
+        for field in required:
+            if field not in data:
+                return jsonify({'success': False, 'error': f'Missing field: {field}'}), 400
+        
+        zone_id = zone_manager.create_zone(
+            name=data['name'],
+            zone_type=data['zone_type'],
+            polygon_coords=data['polygon_coords'],
+            description=data.get('description', ''),
+            max_altitude=data.get('max_altitude', 100.0),
+            alert_on_entry=data.get('alert_on_entry', True)
+        )
+        
+        return jsonify({
+            'success': True,
+            'zone_id': zone_id,
+            'message': f'Zone "{data["name"]}" created successfully'
+        })
+    
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/zones', methods=['GET'])
+def get_zones():
+    """Get all zones"""
+    try:
+        active_only = request.args.get('active_only', 'true').lower() == 'true'
+        zones = zone_manager.get_all_zones(active_only=active_only)
+        
+        return jsonify({
+            'success': True,
+            'zones': zones,
+            'count': len(zones)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/zones/<int:zone_id>', methods=['GET'])
+def get_zone(zone_id):
+    """Get a specific zone by ID"""
+    try:
+        zone = zone_manager.get_zone_by_id(zone_id)
+        
+        if not zone:
+            return jsonify({'success': False, 'error': 'Zone not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'zone': zone
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/zones/<int:zone_id>', methods=['DELETE'])
+def delete_zone(zone_id):
+    """Delete a zone (soft delete)"""
+    try:
+        permanent = request.args.get('permanent', 'false').lower() == 'true'
+        
+        if permanent:
+            success = zone_manager.permanently_delete_zone(zone_id)
+        else:
+            success = zone_manager.delete_zone(zone_id)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Zone {zone_id} deleted'
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Zone not found'}), 404
+    
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/zones/stats', methods=['GET'])
+def get_zone_stats():
+    """Get zone statistics"""
+    try:
+        stats = zone_manager.get_statistics()
+        return jsonify({
+            'success': True,
+            'statistics': stats
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/zones/check', methods=['POST'])
+def check_zone_violation():
+    """Check if a position violates any zones"""
+    try:
+        data = request.get_json()
+        lat = data.get('latitude')
+        lon = data.get('longitude')
+        altitude = data.get('altitude', 2.0)
+        
+        if lat is None or lon is None:
+            return jsonify({'success': False, 'error': 'Missing latitude/longitude'}), 400
+        
+        # Check for violations
+        violation_result = violation_detector.check_position(lat, lon, altitude)
+        
+        # Get zones containing point
+        containing_zones = zone_manager.get_zones_containing_point(lat, lon)
+        
+        return jsonify({
+            'success': True,
+            'violation': violation_result['violation'],
+            'violation_info': violation_result,
+            'containing_zones': containing_zones
+        })
+    
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/violations', methods=['GET'])
+def get_violations():
+    """Get recent violations"""
+    try:
+        limit = int(request.args.get('limit', 50))
+        severity = request.args.get('severity')
+        
+        if severity:
+            violations = violation_logger.get_violations_by_severity(severity)
+        else:
+            violations = violation_logger.get_recent_violations(limit)
+        
+        return jsonify({
+            'success': True,
+            'violations': violations,
+            'count': len(violations)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/violations/stats', methods=['GET'])
+def get_violation_stats():
+    """Get violation statistics"""
+    try:
+        stats = violation_logger.get_statistics()
+        return jsonify({
+            'success': True,
+            'statistics': stats
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/rth/trigger', methods=['POST'])
+def trigger_rth():
+    """Trigger return-to-home"""
+    try:
+        data = request.get_json()
+        reason = data.get('reason', 'manual')
+        emergency = data.get('emergency', False)
+        
+        # Get current drone position
+        telemetry = drone_state.get_telemetry()
+        
+        rth_info = rth_system.trigger_rth(
+            current_lat=telemetry['latitude'],
+            current_lon=telemetry['longitude'],
+            reason=reason,
+            emergency=emergency
+        )
+        
+        # Update drone state to RETURNING_HOME
+        drone_state.status = 'RETURNING_HOME'
+        
+        return jsonify({
+            'success': True,
+            'message': f'RTH triggered: {reason}',
+            'rth_info': rth_info
+        })
+    
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/rth/cancel', methods=['POST'])
+def cancel_rth():
+    """Cancel return-to-home"""
+    try:
+        rth_system.cancel_rth()
+        
+        # Resume normal patrol
+        drone_state.status = 'PATROLLING'
+        
+        return jsonify({
+            'success': True,
+            'message': 'RTH cancelled'
+        })
+    
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/rth/status', methods=['GET'])
+def get_rth_status():
+    """Get RTH status"""
+    try:
+        # Get current position
+        telemetry = drone_state.get_telemetry()
+        
+        status = rth_system.get_status(
+            current_lat=telemetry['latitude'],
+            current_lon=telemetry['longitude']
+        )
+        
+        return jsonify({
+            'success': True,
+            'rth_status': status
+        })
+    
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

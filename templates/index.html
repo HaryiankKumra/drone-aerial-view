@@ -7,6 +7,9 @@
     <!-- Leaflet.js for map -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Leaflet.draw for geofencing polygons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     <style>
         /* Campus Guardian Drone - Professional Futuristic Design */
         
@@ -196,10 +199,10 @@
         
         /* Main layout */
         .main-container {
-            padding: 24px;
+            padding: 28px;
             display: grid;
-            grid-template-columns: 1fr 400px;
-            gap: 24px;
+            grid-template-columns: 1fr 420px;
+            gap: 28px;
             min-height: calc(100vh - 64px);
         }
         
@@ -207,7 +210,7 @@
         .left-column {
             display: flex;
             flex-direction: column;
-            gap: 24px;
+            gap: 28px;
         }
         
         .video-container {
@@ -1017,7 +1020,7 @@
         <!-- Right Column - Drone Status & Activity -->
         <div class="right-column">
             <!-- Drone Status Panel -->
-            <div class="glass-card" style="padding: 20px;">
+            <div class="glass-card" style="padding: 24px;">
                 <div class="stats-header">
                     <div class="stats-title">
                         <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: hsl(var(--primary))">
@@ -1097,8 +1100,67 @@
                 </div>
             </div>
             
+            <!-- PHASE-3: Geofencing & RTH Control -->
+            <div class="glass-card" style="padding: 24px;">
+                <div class="stats-header" style="margin-bottom: 16px;">
+                    <div class="stats-title">
+                        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: hsl(var(--primary))">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20.247V6.169a1 1 0 011.447-.894l4.553 2.276A2 2 0 0117 9.237V20.75a1 1 0 01-1.447.894l-4.553-2.276A2 2 0 019 20.247z"></path>
+                        </svg>
+                        <span>Geofencing</span>
+                    </div>
+                    <div id="violationBadge" class="status-badge" style="display: none;">
+                        <div class="status-dot"></div>
+                        <span>VIOLATION</span>
+                    </div>
+                </div>
+                
+                <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+                    <button class="btn btn-primary" id="createZoneBtn" style="flex: 1; padding: 10px 16px; font-size: 0.875rem;">
+                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="margin-right: 8px;">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                        </svg>
+                        Create Zone
+                    </button>
+                    <button class="btn btn-danger" id="rthBtn" style="flex: 1; padding: 10px 16px; font-size: 0.875rem;">
+                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="margin-right: 8px;">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                        </svg>
+                        RTH
+                    </button>
+                </div>
+                
+                <div style="background: hsl(var(--secondary) / 0.3); padding: 14px; border-radius: 8px; margin-bottom: 12px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="font-size: 0.75rem; color: hsl(var(--muted-foreground));">ZONES</span>
+                        <span class="mono-data" style="font-size: 0.875rem; color: hsl(var(--primary));" id="zoneCount">0</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; font-size: 0.75rem;">
+                        <div style="flex: 1;">
+                            <span style="color: hsl(var(--alert-success));">●</span> Patrol: <span id="patrolZones">0</span>
+                        </div>
+                        <div style="flex: 1;">
+                            <span style="color: hsl(var(--alert-warning));">●</span> Restricted: <span id="restrictedZones">0</span>
+                        </div>
+                        <div style="flex: 1;">
+                            <span style="color: hsl(var(--alert-danger));">●</span> No-Fly: <span id="noFlyZones">0</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="background: hsl(var(--secondary) / 0.3); padding: 14px; border-radius: 8px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="font-size: 0.75rem; color: hsl(var(--muted-foreground));">VIOLATIONS TODAY</span>
+                        <span class="mono-data" style="font-size: 0.875rem; color: hsl(var(--alert-danger));" id="violationsToday">0</span>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" id="viewViolationsBtn" style="width: 100%; padding: 8px; font-size: 0.75rem;">
+                        View Violation History
+                    </button>
+                </div>
+            </div>
+            
             <!-- System Health -->
-            <div class="glass-card" style="padding: 20px;">
+            <div class="glass-card" style="padding: 24px;">
                 <div class="stats-header" style="margin-bottom: 12px;">
                     <div class="stats-title">
                         <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: hsl(var(--primary))">
@@ -1635,6 +1697,24 @@
                 
                 // Update map position
                 updateMapPosition(data.latitude, data.longitude);
+                
+                // PHASE-3: Check for violations
+                const violationBadge = document.getElementById('violationBadge');
+                if (data.violation) {
+                    violationBadge.style.display = 'flex';
+                    violationBadge.style.background = data.violation_severity === 'CRITICAL' ? 
+                        'hsl(var(--alert-danger) / 0.2)' : 'hsl(var(--alert-warning) / 0.2)';
+                    violationBadge.querySelector('span').textContent = data.violation_severity + ' VIOLATION';
+                } else {
+                    violationBadge.style.display = 'none';
+                }
+                
+                // Update RTH button state
+                if (data.rth_active) {
+                    const rthBtn = document.getElementById('rthBtn');
+                    rthBtn.style.background = 'hsl(var(--alert-warning))';
+                    rthBtn.innerHTML = '⏸️ Cancel RTH';
+                }
             } catch (err) {
                 console.error('Telemetry error:', err);
             }
@@ -2041,6 +2121,234 @@
                 console.error('Error fetching event details:', error);
             }
         }
+        
+        // ==================== PHASE-3: GEOFENCING SYSTEM ====================
+        
+        let droneDrawControl = null;
+        let drawnZones = [];
+        let currentZoneLayer = null;
+        
+        // Load zones and display on map
+        async function loadZones() {
+            try {
+                const response = await fetch('/zones');
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Clear existing zone layers
+                    drawnZones.forEach(layer => {
+                        if (droneMap && droneMap.hasLayer(layer)) {
+                            droneMap.removeLayer(layer);
+                        }
+                    });
+                    drawnZones = [];
+                    
+                    // Add zones to map
+                    data.zones.forEach(zone => {
+                        const coords = zone.polygon_coords.map(coord => [coord[0], coord[1]]);
+                        const color = zone.zone_type === 'no_fly' ? '#ef4444' : 
+                                     zone.zone_type === 'restricted' ? '#f59e0b' : '#22c55e';
+                        
+                        const polygon = L.polygon(coords, {
+                            color: color,
+                            fillColor: color,
+                            fillOpacity: 0.2,
+                            weight: 2
+                        }).addTo(droneMap);
+                        
+                        polygon.bindPopup(`<b>${zone.name}</b><br>Type: ${zone.zone_type}<br>Max Alt: ${zone.max_altitude}m`);
+                        drawnZones.push(polygon);
+                    });
+                    
+                    // Update stats
+                    updateZoneStats(data.zones);
+                }
+            } catch (error) {
+                console.error('Error loading zones:', error);
+            }
+        }
+        
+        function updateZoneStats(zones) {
+            const patrolCount = zones.filter(z => z.zone_type === 'patrol').length;
+            const restrictedCount = zones.filter(z => z.zone_type === 'restricted').length;
+            const noFlyCount = zones.filter(z => z.zone_type === 'no_fly').length;
+            
+            document.getElementById('zoneCount').textContent = zones.length;
+            document.getElementById('patrolZones').textContent = patrolCount;
+            document.getElementById('restrictedZones').textContent = restrictedCount;
+            document.getElementById('noFlyZones').textContent = noFlyCount;
+        }
+        
+        // Create zone with polygon drawing
+        document.getElementById('createZoneBtn')?.addEventListener('click', () => {
+            const zoneName = prompt('Enter zone name:');
+            if (!zoneName) return;
+            
+            const zoneType = prompt('Enter zone type (patrol/restricted/no_fly):');
+            if (!zoneType || !['patrol', 'restricted', 'no_fly'].includes(zoneType)) {
+                alert('Invalid zone type. Use: patrol, restricted, or no_fly');
+                return;
+            }
+            
+            // Enable polygon drawing on expanded map
+            document.getElementById('expandMapBtn').click();
+            
+            setTimeout(() => {
+                if (expandedMapObj && !droneDrawControl) {
+                    const drawnItems = new L.FeatureGroup();
+                    expandedMapObj.addLayer(drawnItems);
+                    
+                    droneDrawControl = new L.Control.Draw({
+                        edit: {
+                            featureGroup: drawnItems,
+                            edit: false,
+                            remove: false
+                        },
+                        draw: {
+                            polygon: {
+                                shapeOptions: {
+                                    color: zoneType === 'no_fly' ? '#ef4444' : 
+                                          zoneType === 'restricted' ? '#f59e0b' : '#22c55e'
+                                }
+                            },
+                            polyline: false,
+                            circle: false,
+                            rectangle: false,
+                            marker: false,
+                            circlemarker: false
+                        }
+                    });
+                    
+                    expandedMapObj.addControl(droneDrawControl);
+                    
+                    expandedMapObj.on(L.Draw.Event.CREATED, async (e) => {
+                        const layer = e.layer;
+                        const coords = layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+                        
+                        // Create zone
+                        try {
+                            const response = await fetch('/zones/create', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({
+                                    name: zoneName,
+                                    zone_type: zoneType,
+                                    polygon_coords: coords,
+                                    description: `${zoneType} zone created via UI`,
+                                    max_altitude: zoneType === 'no_fly' ? 0 : 100,
+                                    alert_on_entry: true
+                                })
+                            });
+                            
+                            const data = await response.json();
+                            if (data.success) {
+                                addLog(`✅ Zone created: ${zoneName} (${zoneType})`);
+                                loadZones();
+                                
+                                // Remove draw control
+                                if (droneDrawControl) {
+                                    expandedMapObj.removeControl(droneDrawControl);
+                                    droneDrawControl = null;
+                                }
+                            } else {
+                                alert(`Error: ${data.error}`);
+                            }
+                        } catch (error) {
+                            console.error('Error creating zone:', error);
+                            alert('Failed to create zone');
+                        }
+                    });
+                    
+                    alert(`Draw a polygon on the map to define the ${zoneType} zone`);
+                }
+            }, 500);
+        });
+        
+        // RTH button
+        document.getElementById('rthBtn')?.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/rth/trigger', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        reason: 'manual',
+                        emergency: false
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    addLog('🚨 RTH TRIGGERED - Returning to home');
+                    document.getElementById('rthBtn').textContent = '⏸️ Cancel RTH';
+                    document.getElementById('rthBtn').onclick = () => cancelRTH();
+                } else {
+                    alert(`Error: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Error triggering RTH:', error);
+            }
+        });
+        
+        async function cancelRTH() {
+            try {
+                const response = await fetch('/rth/cancel', {method: 'POST'});
+                const data = await response.json();
+                if (data.success) {
+                    addLog('✅ RTH cancelled - Resuming patrol');
+                    document.getElementById('rthBtn').innerHTML = '<svg width=\"16\" height=\"16\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\" style=\"margin-right: 8px;\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6\"></path></svg>RTH';
+                    document.getElementById('rthBtn').onclick = () => document.getElementById('rthBtn').click();
+                }
+            } catch (error) {
+                console.error('Error cancelling RTH:', error);
+            }
+        }
+        
+        // Check for violations in telemetry
+        async function checkViolations() {
+            try {
+                const response = await fetch('/violations/stats');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const todayCount = data.statistics.today || 0;
+                    document.getElementById('violationsToday').textContent = todayCount;
+                }
+            } catch (error) {
+                console.error('Error checking violations:', error);
+            }
+        }
+        
+        // View violations button
+        document.getElementById('viewViolationsBtn')?.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/violations?limit=20');
+                const data = await response.json();
+                
+                if (data.success && data.violations.length > 0) {
+                    let message = '🚨 RECENT VIOLATIONS:\\n\\n';
+                    data.violations.slice(0, 5).forEach(v => {
+                        const time = new Date(v.timestamp).toLocaleTimeString();
+                        message += `${time} - ${v.violation_type} (${v.severity})\\n`;
+                    });
+                    alert(message);
+                } else {
+                    alert('No violations recorded');
+                }
+            } catch (error) {
+                console.error('Error fetching violations:', error);
+            }
+        });
+        
+        // Load zones on startup
+        setTimeout(() => {
+            loadZones();
+            checkViolations();
+            
+            // Refresh every 10 seconds
+            setInterval(() => {
+                checkViolations();
+            }, 10000);
+        }, 2000);
 
     </script>
     
