@@ -27,6 +27,7 @@ from csv_logger import event_logger
 # Add backend to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 from telemetry.drone_state import DroneState
+from event_engine import EventEngine, TelegramBot
 
 app = Flask(__name__)
 
@@ -55,6 +56,20 @@ print("Model loaded successfully!")
 # TODO: Replace with real coordinates for your campus
 drone_state = DroneState(start_location=(30.3560, 76.3649))
 print(f"🚁 Drone telemetry initialized")
+
+# Initialize Event Engine (Phase-2)
+event_engine = EventEngine(db_path='data/events.db')
+telegram_bot = TelegramBot()
+print(f"🎯 Event engine initialized")
+
+# Test Telegram connection
+if telegram_bot.enabled:
+    success, message = telegram_bot.test_connection()
+    if success:
+        print(f"📱 Telegram: {message}")
+    else:
+        print(f"⚠️  Telegram: {message}")
+
 
 # Configuration
 CONF_THRESHOLD = 0.25
@@ -148,6 +163,91 @@ def set_patrol_pattern():
     
     drone_state.set_patrol_pattern(pattern)
     return jsonify({'success': True, 'pattern': pattern})
+
+# ============================================================================
+# RASPBERRY PI EDGE DEVICE ENDPOINTS
+# ============================================================================
+
+@app.route('/rpi/detect', methods=['POST'])
+def rpi_detect():
+    """
+    Raspberry Pi edge device detection endpoint
+    Accepts frames from remote Pi cameras for centralized detection
+    """
+    try:
+        data = request.get_json()
+        
+        # Extract device info
+        device_id = data.get('device_id', 'UNKNOWN')
+        location = data.get('location', 'Unknown Location')
+        timestamp = data.get('timestamp')
+        
+        # Handle base64 image
+        image_data = base64.b64decode(data['image'].split(',')[1] if ',' in data['image'] else data['image'])
+        image = Image.open(BytesIO(image_data))
+        frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        
+        # Run detection
+        results = model(frame, conf=CONF_THRESHOLD, verbose=False)[0]
+        
+        # Process detections
+        detections = []
+        for box in results.boxes:
+            cls_id = int(box.cls[0])
+            class_name = model.names[cls_id]
+            
+            if class_name in TARGET_CLASSES:
+                conf = float(box.conf[0])
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                
+                detections.append({
+                    'class': class_name,
+                    'confidence': round(conf, 2),
+                    'bbox': {
+                        'x1': int(x1),
+                        'y1': int(y1),
+                        'x2': int(x2),
+                        'y2': int(y2)
+                    }
+                })
+        
+        print(f"📡 RPi {device_id} @ {location}: {len(detections)} detections")
+        
+        return jsonify({
+            'success': True,
+            'device_id': device_id,
+            'location': location,
+            'detections': detections,
+            'total_objects': len(detections)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/rpi/register', methods=['POST'])
+def rpi_register():
+    """Register a new Raspberry Pi device"""
+    try:
+        data = request.get_json()
+        device_id = data.get('device_id')
+        location = data.get('location')
+        
+        # TODO: Store device info in database
+        
+        print(f"📱 New RPi registered: {device_id} @ {location}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Device registered successfully',
+            'device_id': device_id,
+            'server_time': time.strftime("%Y-%m-%d %H:%M:%S")
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/detect', methods=['POST'])
 def detect():
@@ -346,10 +446,11 @@ def detect_annotated():
             cumulative_stats['total_vehicles'] += new_vehicles
             cumulative_stats['total_detections'] += len(new_detections)
         
-        # Auto-photo: Save only if NOT recording AND 5+ seconds since last photo AND has new detections
+        # Auto-photo: Save only if NOT recording AND 3+ seconds since last photo AND has new detections
         should_save_photo = False
         event = None
         alert_level = 'info'
+        event_ids = []  # Track created events
         
         if not video_recording and len(new_detections) > 0:
             if (current_time - last_photo_time) >= PHOTO_COOLDOWN:
@@ -372,6 +473,40 @@ def detect_annotated():
                 
                 # Log to CSV
                 event_logger.log_detection(detections, alert_level)
+                
+                # PHASE-2: Process through Event Engine
+                telemetry = drone_state.get_telemetry()
+                for detection in new_detections:
+                    detection_data = {
+                        'class': detection['class'],
+                        'confidence': detection['confidence'],
+                        'bbox': detection['bbox'],
+                        'snapshot_url': event.get('url') if event else None,
+                        'snapshot_path': event.get('id') if event else None,
+                        'drone_lat': telemetry['latitude'],
+                        'drone_lon': telemetry['longitude'],
+                        'zone': 'Campus Area'  # TODO: Add geofencing in Phase-3
+                    }
+                    
+                    # Process detection (creates event if 5-second rule met)
+                    event_id = event_engine.process_detection(detection_data)
+                    
+                    if event_id:
+                        event_ids.append(event_id)
+                        print(f"🎯 Event created: {event_id}")
+                        
+                        # Check if alert should be sent
+                        if event_engine.should_alert(event_id):
+                            event_details = event_engine.get_event_details(event_id)
+                            
+                            # Send Telegram alert
+                            if telegram_bot.send_alert(event_details):
+                                event_engine.log_alert_sent(
+                                    event_id, 
+                                    'telegram', 
+                                    'security_team'
+                                )
+
         
         return jsonify({
             'success': True,
@@ -387,6 +522,7 @@ def detect_annotated():
             'photo_saved': should_save_photo,
             'recording': video_recording,
             'event_id': event['id'] if event else None,
+            'security_events': event_ids,  # New: Event engine event IDs
             'fps': round(fps_value, 1)
         })
     
@@ -517,6 +653,11 @@ def start_recording():
     global video_recording, video_filename, video_frames
     
     try:
+        # Auto-reset if recording flag is set but no frames exist (error recovery)
+        if video_recording and len(video_frames) == 0:
+            print("⚠️  Resetting stale recording state")
+            video_recording = False
+        
         if video_recording:
             return jsonify({
                 'success': False,
@@ -538,6 +679,7 @@ def start_recording():
         })
     
     except Exception as e:
+        video_recording = False  # Reset on error
         return jsonify({
             'success': False,
             'error': str(e)
@@ -624,6 +766,20 @@ def recording_status():
         'filename': video_filename if video_recording else None
     })
 
+@app.route('/reset_recording', methods=['POST'])
+def reset_recording():
+    """Reset recording state (emergency recovery)"""
+    global video_recording, video_filename, video_frames
+    
+    video_recording = False
+    video_filename = None
+    video_frames = []
+    
+    return jsonify({
+        'success': True,
+        'message': 'Recording state reset'
+    })
+
 @app.route('/download_csv', methods=['GET'])
 def download_csv():
     """Download current CSV event log"""
@@ -662,6 +818,73 @@ def csv_status():
             return jsonify({'error': 'No log file'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# PHASE-2: EVENT ENGINE ENDPOINTS
+# ============================================================================
+
+@app.route('/security/events', methods=['GET'])
+def get_security_events():
+    """Get recent security events from event engine"""
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        severity = request.args.get('severity', None, type=str)
+        
+        events = event_engine.get_recent_events(limit, severity)
+        
+        return jsonify({
+            'success': True,
+            'events': events,
+            'total': len(events)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/security/event/<event_id>', methods=['GET'])
+def get_security_event_details(event_id):
+    """Get specific security event details"""
+    try:
+        event = event_engine.get_event_details(event_id)
+        
+        if event:
+            return jsonify({
+                'success': True,
+                'event': event
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Event not found'
+            }), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/security/stats', methods=['GET'])
+def get_security_stats():
+    """Get security event statistics"""
+    try:
+        stats = event_engine.get_statistics()
+        
+        return jsonify({
+            'success': True,
+            'stats': stats
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/security/telegram/test', methods=['GET'])
+def test_telegram():
+    """Test Telegram bot connection"""
+    try:
+        success, message = telegram_bot.test_connection()
+        
+        return jsonify({
+            'success': success,
+            'message': message,
+            'enabled': telegram_bot.enabled
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     # Log system start

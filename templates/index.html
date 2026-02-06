@@ -948,7 +948,7 @@
                         <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
                             <circle cx="12" cy="12" r="10" fill="red"></circle>
                         </svg>
-                        <span id="recordVideoText">Start Recording</span>
+                        <span id="recordVideoText">Start Recording (25.0°C)</span>
                     </button>
                     <button class="btn btn-danger" id="stopVideoBtn" style="display: none;">
                         <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1120,6 +1120,48 @@
                         <div class="health-label">SERVER</div>
                         <div class="health-status ok" id="healthServer">ONLINE</div>
                     </div>
+                </div>
+            </div>
+            
+            <!-- PHASE-2: Security Events Log -->
+            <div class="glass-card" style="grid-column: span 2;">
+                <div class="stats-header" style="margin-bottom: 16px;">
+                    <div class="stats-title">
+                        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: hsl(var(--primary))">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                        </svg>
+                        <span>Security Events</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-sm" onclick="filterEvents('ALL')" id="filterAll" style="padding: 4px 12px; font-size: 0.75rem; background: hsl(var(--primary));">ALL</button>
+                        <button class="btn btn-sm" onclick="filterEvents('HIGH')" id="filterHigh" style="padding: 4px 12px; font-size: 0.75rem; background: hsl(var(--secondary));">🚨 HIGH</button>
+                        <button class="btn btn-sm" onclick="filterEvents('MEDIUM')" id="filterMedium" style="padding: 4px 12px; font-size: 0.75rem; background: hsl(var(--secondary));">⚠️ MEDIUM</button>
+                        <button class="btn btn-sm" onclick="filterEvents('LOW')" id="filterLow" style="padding: 4px 12px; font-size: 0.75rem; background: hsl(var(--secondary));">ℹ️ LOW</button>
+                    </div>
+                </div>
+                <div style="max-height: 400px; overflow-y: auto; padding: 12px; background: hsl(var(--secondary) / 0.2); border-radius: 8px;">
+                    <div id="securityEventsContainer">
+                        <div style="text-align: center; color: hsl(var(--muted-foreground)); padding: 40px;">
+                            <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="opacity: 0.3; margin: 0 auto;">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                            </svg>
+                            <p style="margin-top: 12px;">No security events yet</p>
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center; padding: 12px; background: hsl(var(--secondary) / 0.2); border-radius: 8px;">
+                    <div class="mono-data" style="font-size: 0.75rem;">
+                        <span style="color: hsl(var(--muted-foreground));">TOTAL:</span> <span id="eventStatsTotal">0</span> |
+                        <span style="color: #ef4444;">HIGH:</span> <span id="eventStatsHigh">0</span> |
+                        <span style="color: #f59e0b;">MEDIUM:</span> <span id="eventStatsMedium">0</span> |
+                        <span style="color: #3b82f6;">LOW:</span> <span id="eventStatsLow">0</span>
+                    </div>
+                    <button class="btn btn-sm btn-primary" onclick="refreshEvents()" style="padding: 4px 12px; font-size: 0.75rem;">
+                        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="display: inline;">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        Refresh
+                    </button>
                 </div>
             </div>
             
@@ -1531,7 +1573,7 @@
                 // Update drone status panel
                 document.getElementById('droneStatus').textContent = data.status;
                 document.getElementById('droneAltitude').textContent = data.altitude.toFixed(1);
-                document.getElementById('droneTemperature').textContent = data.temperature.toFixed(1);
+                document.getElementById('droneTemperature').textContent = (data.temperature || 25.0).toFixed(1);
                 document.getElementById('droneBattery').textContent = Math.round(data.battery);
                 document.getElementById('droneSpeed').textContent = data.speed.toFixed(1);
                 document.getElementById('droneGPS').textContent = data.gps_lock ? 'LOCK' : 'NO LOCK';
@@ -1583,6 +1625,13 @@
                 }
                 statusEl.style.color = statusColor;
                 modeEl.style.color = statusColor;
+                
+                // Update recording button with current temperature
+                const currentTemp = data.temperature || 25.0;
+                const recordBtn = document.getElementById('recordVideoText');
+                if (recordBtn) {
+                    recordBtn.textContent = `Start Recording (${currentTemp.toFixed(1)}°C)`;
+                }
                 
                 // Update map position
                 updateMapPosition(data.latitude, data.longitude);
@@ -1799,8 +1848,22 @@
         
         // Update map with drone position
         function updateMapPosition(lat, lon) {
+            // Update the global drone location
+            currentDroneLocation = [lat, lon];
+            
+            // Update map view to follow drone
+            if (droneMap) {
+                droneMap.setView([lat, lon], 17);
+            }
+            
+            // Update marker position
             if (droneMarker) {
                 droneMarker.setLatLng([lat, lon]);
+            }
+            
+            // Update patrol circle position
+            if (patrolCircle) {
+                patrolCircle.setLatLng([lat, lon]);
             }
         }
         
@@ -1839,7 +1902,146 @@
             
             // Start health monitoring
             setInterval(updateSystemHealth, 2000); // Update every 2 seconds
+            
+            // PHASE-2: Start event monitoring
+            refreshEvents();
+            setInterval(refreshEvents, 5000); // Refresh events every 5 seconds
         });
+        
+        // ========================================================================
+        // PHASE-2: SECURITY EVENT FUNCTIONS
+        // ========================================================================
+        
+        let currentEventFilter = 'ALL';
+        
+        async function refreshEvents() {
+            try {
+                // Get events
+                const severity = currentEventFilter === 'ALL' ? null : currentEventFilter;
+                const url = severity ? `/security/events?severity=${severity}` : '/security/events';
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayEvents(data.events);
+                }
+                
+                // Update stats
+                const statsResponse = await fetch('/security/stats');
+                const statsData = await statsResponse.json();
+                
+                if (statsData.success) {
+                    updateEventStats(statsData.stats);
+                }
+            } catch (error) {
+                console.error('Error refreshing events:', error);
+            }
+        }
+        
+        function displayEvents(events) {
+            const container = document.getElementById('securityEventsContainer');
+            
+            if (events.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; color: hsl(var(--muted-foreground)); padding: 40px;">
+                        <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="opacity: 0.3; margin: 0 auto;">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                        </svg>
+                        <p style="margin-top: 12px;">No security events</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
+            
+            events.forEach(event => {
+                const severityColor = {
+                    'HIGH': '#ef4444',
+                    'MEDIUM': '#f59e0b',
+                    'LOW': '#3b82f6'
+                }[event.severity] || '#6b7280';
+                
+                const severityEmoji = {
+                    'HIGH': '🚨',
+                    'MEDIUM': '⚠️',
+                    'LOW': 'ℹ️'
+                }[event.severity] || '📍';
+                
+                const timestamp = new Date(event.timestamp).toLocaleTimeString();
+                
+                html += `
+                    <div class="event-card" style="background: hsl(var(--secondary) / 0.3); padding: 12px; border-radius: 8px; border-left: 4px solid ${severityColor}; cursor: pointer;" onclick="viewEventDetails('${event.event_id}')">
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+                            <div>
+                                <div style="font-weight: 700; font-size: 0.875rem; color: hsl(var(--foreground));">
+                                    ${severityEmoji} ${event.object_type.toUpperCase()}
+                                </div>
+                                <div class="mono-data" style="font-size: 0.7rem; color: hsl(var(--muted-foreground));">
+                                    ${event.event_id} • ${timestamp}
+                                </div>
+                            </div>
+                            <div style="background: ${severityColor}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700;">
+                                ${event.severity}
+                            </div>
+                        </div>
+                        <div style="font-size: 0.75rem; color: hsl(var(--muted-foreground));">
+                            📍 ${event.zone} • Confidence: ${(event.confidence * 100).toFixed(1)}%
+                        </div>
+                        ${event.snapshot_url ? `<img src="${event.snapshot_url}" style="width: 100%; max-height: 150px; object-fit: cover; border-radius: 4px; margin-top: 8px;" />` : ''}
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+        
+        function updateEventStats(stats) {
+            document.getElementById('eventStatsTotal').textContent = stats.total_events;
+            document.getElementById('eventStatsHigh').textContent = stats.high_severity;
+            document.getElementById('eventStatsMedium').textContent = stats.medium_severity;
+            document.getElementById('eventStatsLow').textContent = stats.low_severity;
+        }
+        
+        function filterEvents(severity) {
+            currentEventFilter = severity;
+            
+            // Update button styles
+            ['All', 'High', 'Medium', 'Low'].forEach(s => {
+                const btn = document.getElementById(`filter${s}`);
+                if (btn) {
+                    if (s.toUpperCase() === severity || (s === 'All' && severity === 'ALL')) {
+                        btn.style.background = 'hsl(var(--primary))';
+                    } else {
+                        btn.style.background = 'hsl(var(--secondary))';
+                    }
+                }
+            });
+            
+            refreshEvents();
+        }
+        
+        async function viewEventDetails(eventId) {
+            try {
+                const response = await fetch(`/security/event/${eventId}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const event = data.event;
+                    const timestamp = new Date(event.timestamp).toLocaleString();
+                    
+                    addLog(`📋 Viewing event: ${event.event_id} - ${event.object_type} (${event.severity})`);
+                    
+                    // Could open a modal here with full details
+                    console.log('Event details:', event);
+                }
+            } catch (error) {
+                console.error('Error fetching event details:', error);
+            }
+        }
+
     </script>
     
     <!-- Map Expand Modal -->
