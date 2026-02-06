@@ -53,7 +53,7 @@ def is_same_object(bbox1, bbox2, class1, class2):
 
 # Load model once at startup
 print("Loading YOLOv8-VisDrone model...")
-model = YOLO('yolov8s-visdrone.pt')
+model = YOLO('yolov8n-visdrone.pt')
 print("Model loaded successfully!")
 
 # Initialize drone state (simulated telemetry)
