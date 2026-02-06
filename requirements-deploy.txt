@@ -1,9 +1,12 @@
 flask==3.1.0
+gunicorn==23.0.0
+torch==2.10.0+cpu
+torchvision==0.25.0+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
 ultralytics==8.4.0
 opencv-python-headless==4.10.0.84
 numpy>=1.26.2
 Pillow==10.4.0
-gunicorn==23.0.0
 pymongo==4.10.1
 dnspython==2.7.0
 cloudinary==1.41.0
