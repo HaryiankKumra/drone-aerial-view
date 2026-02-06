@@ -1,7 +1,18 @@
 """
-Flask API for Aerial Drone Surveillance - FREE Deployment Ready
-Receives images from camera, runs YOLOv8 detection, returns results
+Flask API for Campus Guardian Drone - Aerial Surveillance System
+Modular architecture supporting multiple video sources and drone telemetry
 """
+import os
+import sys
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("✅ Loaded environment variables from .env file")
+except ImportError:
+    print("⚠️  python-dotenv not installed - using system environment variables only")
+
 from flask import Flask, request, jsonify, render_template, Response, send_file
 from ultralytics import YOLO
 import cv2
@@ -10,9 +21,12 @@ import base64
 from io import BytesIO
 from PIL import Image
 import json
-import os
 from storage import save_detection_event, get_recent_events, get_event_by_id, get_storage_stats, EVENTS_DIR
 from csv_logger import event_logger
+
+# Add backend to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
+from telemetry.drone_state import DroneState
 
 app = Flask(__name__)
 
@@ -37,6 +51,11 @@ print("Loading YOLOv8-VisDrone model...")
 model = YOLO('yolov8s-visdrone.pt')
 print("Model loaded successfully!")
 
+# Initialize drone state (simulated telemetry)
+# TODO: Replace with real coordinates for your campus
+drone_state = DroneState(start_location=(30.3560, 76.3649))
+print(f"🚁 Drone telemetry initialized")
+
 # Configuration
 CONF_THRESHOLD = 0.25
 TARGET_CLASSES = ['pedestrian', 'people', 'bicycle', 'car', 'van', 'truck', 'bus', 'motor']
@@ -46,6 +65,21 @@ tracked_objects = {}
 TRACKING_THRESHOLD = 50  # pixels - objects within this distance are considered same
 ALERT_COOLDOWN = 30  # seconds - minimum time between alerts for same object
 import time
+
+# FPS tracking
+last_request_time = None
+fps_value = 0.0
+
+# Auto-photo cooldown (3 seconds between photos)
+last_photo_time = 0
+PHOTO_COOLDOWN = 3  # seconds between auto-photos (changed from 5 to 3)
+
+# Cumulative statistics
+cumulative_stats = {
+    'total_people': 0,
+    'total_vehicles': 0,
+    'total_detections': 0
+}
 
 @app.route('/')
 def index():
@@ -60,6 +94,60 @@ def health():
         'model': 'yolov8s-visdrone',
         'classes': TARGET_CLASSES
     })
+
+@app.route('/telemetry', methods=['GET'])
+def get_telemetry():
+    """Get current drone telemetry data"""
+    return jsonify(drone_state.get_telemetry())
+
+@app.route('/hud', methods=['GET'])
+def get_hud():
+    """Get HUD overlay data for display"""
+    return jsonify(drone_state.get_hud_data())
+
+@app.route('/system_status', methods=['GET'])
+def system_status():
+    """Get overall system health status"""
+    return jsonify({
+        'camera': 'OK',  # Will be 'ERROR' if video source fails
+        'model': 'RUNNING',
+        'server': 'ONLINE',
+        'gps': 'LOCK' if drone_state.gps_lock else 'NO LOCK',
+        'battery': drone_state.battery,
+        'status': drone_state.status
+    })
+
+@app.route('/update_location', methods=['POST'])
+def update_location():
+    """Update drone base location from browser geolocation"""
+    data = request.get_json()
+    latitude = data.get('latitude')
+    longitude = data.get('longitude')
+    
+    if latitude is not None and longitude is not None:
+        drone_state.update_location(latitude, longitude)
+        return jsonify({'success': True, 'latitude': latitude, 'longitude': longitude})
+    return jsonify({'success': False, 'error': 'Missing latitude or longitude'}), 400
+
+@app.route('/update_temperature', methods=['POST'])
+def update_temperature():
+    """Update temperature from browser/weather API"""
+    data = request.get_json()
+    temperature = data.get('temperature')
+    
+    if temperature is not None:
+        drone_state.update_temperature(temperature)
+        return jsonify({'success': True, 'temperature': temperature})
+    return jsonify({'success': False, 'error': 'Missing temperature'}), 400
+
+@app.route('/set_patrol_pattern', methods=['POST'])
+def set_patrol_pattern():
+    """Set patrol pattern (diamond or circle)"""
+    data = request.get_json()
+    pattern = data.get('pattern', 'diamond')
+    
+    drone_state.set_patrol_pattern(pattern)
+    return jsonify({'success': True, 'pattern': pattern})
 
 @app.route('/detect', methods=['POST'])
 def detect():
@@ -138,6 +226,16 @@ def detect_annotated():
     Detection endpoint that returns annotated image
     Returns: JSON with base64 encoded annotated image and detections
     """
+    global last_request_time, fps_value, last_photo_time, cumulative_stats, video_recording
+    
+    # Calculate FPS
+    current_time = time.time()
+    if last_request_time is not None:
+        time_diff = current_time - last_request_time
+        if time_diff > 0:
+            fps_value = 1.0 / time_diff
+    last_request_time = current_time
+    
     try:
         # Handle base64 image
         if request.is_json:
@@ -235,29 +333,45 @@ def detect_annotated():
             if current_time - tracked_objects[key]['last_alert'] > 60:
                 del tracked_objects[key]
         
-        # Auto-save only for NEW detections
-        should_save = len(new_detections) > 0
+        # Update cumulative statistics
+        global cumulative_stats
+        current_people = sum(1 for d in detections if d['class'] in ['pedestrian', 'people'])
+        current_vehicles = sum(1 for d in detections if d['class'] in ['car', 'van', 'truck', 'bus', 'motor', 'bicycle'])
+        
+        # Add new detections to cumulative totals
+        if len(new_detections) > 0:
+            new_people = sum(1 for d in new_detections if d['class'] in ['pedestrian', 'people'])
+            new_vehicles = sum(1 for d in new_detections if d['class'] in ['car', 'van', 'truck', 'bus', 'motor', 'bicycle'])
+            cumulative_stats['total_people'] += new_people
+            cumulative_stats['total_vehicles'] += new_vehicles
+            cumulative_stats['total_detections'] += len(new_detections)
+        
+        # Auto-photo: Save only if NOT recording AND 5+ seconds since last photo AND has new detections
+        should_save_photo = False
+        event = None
         alert_level = 'info'
         
-        if should_save:
-            # Save if new people detected
-            people_count = sum(1 for d in new_detections if d['class'] in ['pedestrian', 'people'])
-            if people_count > 5:
-                alert_level = 'warning'
-            elif people_count > 10:
-                alert_level = 'critical'
-        
-        # Save event to storage
-        event = None
-        if should_save:
-            event = save_detection_event(
-                f'data:image/jpeg;base64,{img_base64}',
-                new_detections,  # Only save new detections
-                alert_level
-            )
-            
-            # Log ALL detections to CSV (real-time logging)
-            event_logger.log_detection(detections, alert_level)
+        if not video_recording and len(new_detections) > 0:
+            if (current_time - last_photo_time) >= PHOTO_COOLDOWN:
+                should_save_photo = True
+                last_photo_time = current_time
+                
+                # Determine alert level
+                people_count = sum(1 for d in new_detections if d['class'] in ['pedestrian', 'people'])
+                if people_count > 10:
+                    alert_level = 'critical'
+                elif people_count > 5:
+                    alert_level = 'warning'
+                
+                # Save photo to Cloudinary
+                event = save_detection_event(
+                    f'data:image/jpeg;base64,{img_base64}',
+                    new_detections,
+                    alert_level
+                )
+                
+                # Log to CSV
+                event_logger.log_detection(detections, alert_level)
         
         return jsonify({
             'success': True,
@@ -265,8 +379,15 @@ def detect_annotated():
             'detections': detections,
             'total_objects': len(detections),
             'counts': counts,
-            'saved': should_save,
-            'event_id': event['id'] if event else None
+            'current_people': current_people,
+            'current_vehicles': current_vehicles,
+            'cumulative_people': cumulative_stats['total_people'],
+            'cumulative_vehicles': cumulative_stats['total_vehicles'],
+            'cumulative_total': cumulative_stats['total_detections'],
+            'photo_saved': should_save_photo,
+            'recording': video_recording,
+            'event_id': event['id'] if event else None,
+            'fps': round(fps_value, 1)
         })
     
     except Exception as e:
