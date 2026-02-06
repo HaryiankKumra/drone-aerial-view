@@ -744,6 +744,10 @@
             color: hsl(var(--alert-warning));
         }
         
+        .health-status.disconnected {
+            color: hsl(var(--muted-foreground));
+        }
+        
         /* Map Expand Modal */
         .map-modal {
             display: none;
@@ -1181,6 +1185,72 @@
                     <div class="health-item">
                         <div class="health-label">SERVER</div>
                         <div class="health-status ok" id="healthServer">ONLINE</div>
+                    </div>
+                    <div class="health-item">
+                        <div class="health-label">RPi</div>
+                        <div class="health-status disconnected" id="healthRPi">DISCONNECTED</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- PHASE-4: Operational Metrics -->
+            <div class="glass-card" style="padding: 24px;">
+                <div class="stats-header" style="margin-bottom: 16px;">
+                    <div class="stats-title">
+                        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: hsl(var(--primary))">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                        </svg>
+                        <span>24/7 Metrics</span>
+                    </div>
+                    <div id="chargingBadge" class="status-badge" style="display: none; background: hsl(var(--alert-success) / 0.15);">
+                        <div class="status-dot" style="background: hsl(var(--alert-success));"></div>
+                        <span>CHARGING</span>
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+                    <div style="background: hsl(var(--secondary) / 0.3); padding: 12px; border-radius: 8px;">
+                        <div style="font-size: 0.7rem; color: hsl(var(--muted-foreground)); margin-bottom: 4px;">PATROL TIME</div>
+                        <div class="mono-data" style="font-size: 1.25rem; font-weight: 700; color: hsl(var(--primary));">
+                            <span id="metricPatrolHours">0</span>h
+                        </div>
+                    </div>
+                    <div style="background: hsl(var(--secondary) / 0.3); padding: 12px; border-radius: 8px;">
+                        <div style="font-size: 0.7rem; color: hsl(var(--muted-foreground)); margin-bottom: 4px;">UPTIME</div>
+                        <div class="mono-data" style="font-size: 1.25rem; font-weight: 700; color: hsl(var(--primary));">
+                            <span id="metricUptimeHours">0</span>h
+                        </div>
+                    </div>
+                    <div style="background: hsl(var(--secondary) / 0.3); padding: 12px; border-radius: 8px;">
+                        <div style="font-size: 0.7rem; color: hsl(var(--muted-foreground)); margin-bottom: 4px;">EVENTS</div>
+                        <div class="mono-data" style="font-size: 1.25rem; font-weight: 700; color: hsl(var(--alert-warning));">
+                            <span id="metricEvents">0</span>
+                        </div>
+                    </div>
+                    <div style="background: hsl(var(--secondary) / 0.3); padding: 12px; border-radius: 8px;">
+                        <div style="font-size: 0.7rem; color: hsl(var(--muted-foreground)); margin-bottom: 4px;">VIOLATIONS</div>
+                        <div class="mono-data" style="font-size: 1.25rem; font-weight: 700; color: hsl(var(--alert-danger));">
+                            <span id="metricViolations">0</span>
+                        </div>
+                    </div>
+                    <div style="background: hsl(var(--secondary) / 0.3); padding: 12px; border-radius: 8px;">
+                        <div style="font-size: 0.7rem; color: hsl(var(--muted-foreground)); margin-bottom: 4px;">BATTERY CYCLES</div>
+                        <div class="mono-data" style="font-size: 1.25rem; font-weight: 700; color: hsl(var(--alert-success));">
+                            <span id="metricBatteryCycles">0</span>
+                        </div>
+                    </div>
+                    <div style="background: hsl(var(--secondary) / 0.3); padding: 12px; border-radius: 8px;">
+                        <div style="font-size: 0.7rem; color: hsl(var(--muted-foreground)); margin-bottom: 4px;">RTH TRIGGERS</div>
+                        <div class="mono-data" style="font-size: 1.25rem; font-weight: 700; color: hsl(var(--alert-info));">
+                            <span id="metricRTH">0</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="background: hsl(var(--secondary) / 0.3); padding: 12px; border-radius: 8px; margin-top: 12px;">
+                    <div style="font-size: 0.7rem; color: hsl(var(--muted-foreground)); margin-bottom: 4px;">DOCKING STATUS</div>
+                    <div class="mono-data" style="font-size: 0.85rem; color: hsl(var(--foreground));">
+                        <span id="dockingStatus">Patrolling</span>
                     </div>
                 </div>
             </div>
@@ -1715,8 +1785,57 @@
                     rthBtn.style.background = 'hsl(var(--alert-warning))';
                     rthBtn.innerHTML = '⏸️ Cancel RTH';
                 }
+                
+                // PHASE-4: Update docking/charging status
+                const chargingBadge = document.getElementById('chargingBadge');
+                const dockingStatus = document.getElementById('dockingStatus');
+                
+                if (data.is_charging) {
+                    chargingBadge.style.display = 'flex';
+                    dockingStatus.textContent = `Charging (${Math.round(data.battery)}%)`;
+                    dockingStatus.style.color = 'hsl(var(--alert-success))';
+                } else if (data.is_docked) {
+                    chargingBadge.style.display = 'none';
+                    dockingStatus.textContent = 'Docked';
+                    dockingStatus.style.color = 'hsl(var(--alert-info))';
+                } else if (data.status === 'RETURNING_HOME') {
+                    chargingBadge.style.display = 'none';
+                    dockingStatus.textContent = 'Returning to dock...';
+                    dockingStatus.style.color = 'hsl(var(--alert-warning))';
+                } else {
+                    chargingBadge.style.display = 'none';
+                    dockingStatus.textContent = 'Patrolling';
+                    dockingStatus.style.color = 'hsl(var(--foreground))';
+                }
+                
+                // Update docking station marker on map
+                if (data.dock_location && dockMarker) {
+                    dockMarker.setLatLng([data.dock_location.latitude, data.dock_location.longitude]);
+                }
             } catch (err) {
                 console.error('Telemetry error:', err);
+            }
+        }
+        
+        // PHASE-4: Update metrics panel
+        async function updateMetrics() {
+            try {
+                const response = await fetch('/metrics');
+                const result = await response.json();
+                
+                if (result.success) {
+                    const metrics = result.metrics;
+                    
+                    // Update metrics display
+                    document.getElementById('metricPatrolHours').textContent = metrics.patrol_hours.toFixed(1);
+                    document.getElementById('metricUptimeHours').textContent = metrics.uptime_hours.toFixed(1);
+                    document.getElementById('metricEvents').textContent = metrics.total_events_detected;
+                    document.getElementById('metricViolations').textContent = metrics.total_violations;
+                    document.getElementById('metricBatteryCycles').textContent = metrics.total_battery_cycles;
+                    document.getElementById('metricRTH').textContent = metrics.total_rth_triggers;
+                }
+            } catch (err) {
+                console.error('Metrics error:', err);
             }
         }
         
@@ -1724,6 +1843,7 @@
         let droneMap;
         let expandedMapObj;
         let droneMarker;
+        let dockMarker; // Phase-4: Docking station marker
         let patrolCircle;
         let currentDroneLocation = [30.3560, 76.3649]; // Default TIET Library
         let isMapExpanded = false;
@@ -1758,6 +1878,28 @@
             
             droneMarker = L.marker(currentDroneLocation, { icon: droneIcon }).addTo(droneMap);
             droneMarker.bindPopup('<strong>Campus Guardian Drone</strong><br>Status: PATROLLING');
+            
+            // PHASE-4: Add docking station marker (slightly offset from current location)
+            const dockLocation = [currentDroneLocation[0] - 0.0002, currentDroneLocation[1] - 0.0002];
+            const dockIcon = L.divIcon({
+                className: 'dock-marker',
+                html: '<div style="background: #10b981; width: 16px; height: 16px; border-radius: 4px; border: 2px solid white; box-shadow: 0 0 8px #10b981; display: flex; align-items: center; justify-content: center; font-size: 10px;">🔌</div>',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+            
+            dockMarker = L.marker(dockLocation, { icon: dockIcon }).addTo(droneMap);
+            dockMarker.bindPopup('<strong>Docking Station</strong><br>Charging: Available');
+            
+            // Set dock location in backend
+            fetch('/dock/set_location', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    latitude: dockLocation[0],
+                    longitude: dockLocation[1]
+                })
+            });
         }
         
         // Get live location from browser
@@ -1948,24 +2090,63 @@
         }
         
         // Update system health
-        function updateSystemHealth() {
-            // Camera health (check if video is playing)
-            const cameraHealth = document.getElementById('healthCamera');
-            if (webcam.srcObject && webcam.readyState >= 2) {
-                cameraHealth.textContent = 'OK';
-                cameraHealth.className = 'health-status ok';
-            } else {
-                cameraHealth.textContent = 'ERROR';
-                cameraHealth.className = 'health-status error';
+        async function updateSystemHealth() {
+            try {
+                // Fetch system health from backend
+                const response = await fetch('/system_status');
+                const data = await response.json();
+                
+                // Update camera health
+                const cameraHealth = document.getElementById('healthCamera');
+                if (data.camera === 'OK') {
+                    cameraHealth.textContent = 'OK';
+                    cameraHealth.className = 'health-status ok';
+                } else if (data.camera === 'ERROR') {
+                    cameraHealth.textContent = 'ERROR';
+                    cameraHealth.className = 'health-status error';
+                } else {
+                    cameraHealth.textContent = 'DISCONNECTED';
+                    cameraHealth.className = 'health-status disconnected';
+                }
+                
+                // Update model health
+                const modelHealth = document.getElementById('healthModel');
+                if (data.model === 'RUNNING') {
+                    modelHealth.textContent = 'RUNNING';
+                    modelHealth.className = 'health-status ok';
+                } else if (data.model === 'ERROR') {
+                    modelHealth.textContent = 'ERROR';
+                    modelHealth.className = 'health-status error';
+                } else {
+                    modelHealth.textContent = 'DISCONNECTED';
+                    modelHealth.className = 'health-status disconnected';
+                }
+                
+                // Server health
+                document.getElementById('healthServer').textContent = 'ONLINE';
+                document.getElementById('healthServer').className = 'health-status ok';
+                
+                // RPi connection health
+                const rpiHealth = document.getElementById('healthRPi');
+                if (data.rpi_connected) {
+                    rpiHealth.textContent = 'CONNECTED';
+                    rpiHealth.className = 'health-status ok';
+                } else {
+                    rpiHealth.textContent = 'DISCONNECTED';
+                    rpiHealth.className = 'health-status disconnected';
+                }
+            } catch (err) {
+                console.error('System health error:', err);
+                // Fallback to local camera check
+                const cameraHealth = document.getElementById('healthCamera');
+                if (webcam.srcObject && webcam.readyState >= 2) {
+                    cameraHealth.textContent = 'OK';
+                    cameraHealth.className = 'health-status ok';
+                } else {
+                    cameraHealth.textContent = 'ERROR';
+                    cameraHealth.className = 'health-status error';
+                }
             }
-            
-            // Model health (always running if page loaded)
-            document.getElementById('healthModel').textContent = 'RUNNING';
-            document.getElementById('healthModel').className = 'health-status ok';
-            
-            // Server health (always online if we're getting this far)
-            document.getElementById('healthServer').textContent = 'ONLINE';
-            document.getElementById('healthServer').className = 'health-status ok';
         }
         
         // Initialize when DOM is ready
@@ -1981,7 +2162,12 @@
             setInterval(updateTelemetry, 1000); // Update every second
             
             // Start health monitoring
+            updateSystemHealth();
             setInterval(updateSystemHealth, 2000); // Update every 2 seconds
+            
+            // PHASE-4: Start metrics monitoring
+            updateMetrics();
+            setInterval(updateMetrics, 3000); // Update every 3 seconds
             
             // PHASE-2: Start event monitoring
             refreshEvents();

@@ -29,6 +29,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 from telemetry.drone_state import DroneState
 from event_engine import EventEngine, TelegramBot
 from geofencing import ZoneManager, ViolationDetector, ViolationLogger, ReturnToHome
+from metrics import SystemMetrics
+from failure_handler import FailureHandler
+from failure_handler import FailureHandler
 
 app = Flask(__name__)
 
@@ -77,6 +80,14 @@ violation_detector = ViolationDetector(zone_manager)
 violation_logger = ViolationLogger(db_path='data/violations.db')
 rth_system = ReturnToHome(home_lat=30.3560, home_lon=76.3649)
 print(f"🛡️  Geofencing system initialized")
+
+# Initialize Metrics System (Phase-4)
+metrics_tracker = SystemMetrics(data_file='data/metrics.json')
+print(f"📊 Metrics system initialized")
+
+# Initialize Failure Handler (Phase-4)
+failure_handler = FailureHandler(metrics_tracker=metrics_tracker)
+print(f"🛡️ Failure handler initialized")
 
 
 # Configuration
@@ -147,11 +158,14 @@ def get_hud():
 
 @app.route('/system_status', methods=['GET'])
 def system_status():
-    """Get overall system health status"""
+    """Get overall system health status - Phase-4: RPi dependent"""
+    health = drone_state.get_system_health()
+    
     return jsonify({
-        'camera': 'OK',  # Will be 'ERROR' if video source fails
-        'model': 'RUNNING',
+        'camera': health['camera'],
+        'model': health['model'],
         'server': 'ONLINE',
+        'rpi_connected': health['rpi_connected'],
         'gps': 'LOCK' if drone_state.gps_lock else 'NO LOCK',
         'battery': drone_state.battery,
         'status': drone_state.status
@@ -188,6 +202,9 @@ def update_location():
                 action_taken='RTH_TRIGGERED' if violation_result['severity'] == 'CRITICAL' else 'ALERT_SENT'
             )
             
+            # Phase-4: Track violation in metrics
+            metrics_tracker.increment_violation()
+            
             # Trigger RTH on critical violations (no-fly zones)
             if violation_detector.should_trigger_rth(violation_result) and not rth_system.rth_active:
                 rth_info = rth_system.trigger_rth(
@@ -197,6 +214,10 @@ def update_location():
                     emergency=True
                 )
                 drone_state.status = 'RETURNING_HOME'
+                
+                # Phase-4: Track RTH trigger in metrics
+                metrics_tracker.record_rth_trigger()
+                
                 print(f"🚨 CRITICAL VIOLATION - RTH TRIGGERED: {violation_result['message']}")
                 
                 # Send Telegram alert for critical violations
@@ -241,6 +262,7 @@ def rpi_detect():
     """
     Raspberry Pi edge device detection endpoint
     Accepts frames from remote Pi cameras for centralized detection
+    Also receives GPS, speed, and system health data
     """
     try:
         data = request.get_json()
@@ -249,6 +271,22 @@ def rpi_detect():
         device_id = data.get('device_id', 'UNKNOWN')
         location = data.get('location', 'Unknown Location')
         timestamp = data.get('timestamp')
+        
+        # Phase-4: Extract GPS and system health data
+        gps_latitude = data.get('gps_latitude')
+        gps_longitude = data.get('gps_longitude')
+        speed = data.get('speed')
+        camera_ok = data.get('camera_ok', False)
+        model_ok = data.get('model_ok', False)
+        
+        # Update drone state with RPi data
+        drone_state.update_rpi_data(
+            latitude=gps_latitude,
+            longitude=gps_longitude,
+            speed=speed,
+            camera_ok=camera_ok,
+            model_ok=model_ok
+        )
         
         # Handle base64 image
         image_data = base64.b64decode(data['image'].split(',')[1] if ',' in data['image'] else data['image'])
@@ -279,7 +317,11 @@ def rpi_detect():
                     }
                 })
         
-        print(f"📡 RPi {device_id} @ {location}: {len(detections)} detections")
+        # Track events if detections found
+        if detections:
+            metrics_tracker.increment_event()
+        
+        print(f"📡 RPi {device_id} @ {location}: {len(detections)} detections | GPS: ({gps_latitude}, {gps_longitude})")
         
         return jsonify({
             'success': True,
@@ -290,6 +332,7 @@ def rpi_detect():
         })
         
     except Exception as e:
+        metrics_tracker.record_failure('connection')
         return jsonify({
             'success': False,
             'error': str(e)
@@ -513,6 +556,10 @@ def detect_annotated():
             cumulative_stats['total_people'] += new_people
             cumulative_stats['total_vehicles'] += new_vehicles
             cumulative_stats['total_detections'] += len(new_detections)
+            
+            # Phase-4: Track events in metrics
+            for _ in new_detections:
+                metrics_tracker.increment_event()
         
         # Auto-photo: Save only if NOT recording AND 3+ seconds since last photo AND has new detections
         should_save_photo = False
@@ -1177,6 +1224,102 @@ def get_rth_status():
             'rth_status': status
         })
     
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ========================================
+# PHASE-4 ENDPOINTS: Metrics & Docking
+# ========================================
+
+@app.route('/metrics', methods=['GET'])
+def get_metrics():
+    """Get operational metrics for 24/7 system monitoring"""
+    try:
+        metrics = metrics_tracker.get_metrics()
+        return jsonify({
+            'success': True,
+            'metrics': metrics
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/dock/trigger', methods=['POST'])
+def trigger_dock():
+    """Manually trigger return-to-dock sequence"""
+    try:
+        drone_state.trigger_dock()
+        return jsonify({
+            'success': True,
+            'message': 'Docking sequence initiated',
+            'status': drone_state.status
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/dock/status', methods=['GET'])
+def dock_status():
+    """Get current docking/charging status"""
+    try:
+        telemetry = drone_state.get_telemetry()
+        return jsonify({
+            'success': True,
+            'is_docked': telemetry['is_docked'],
+            'is_charging': telemetry['is_charging'],
+            'dock_location': telemetry['dock_location'],
+            'battery': telemetry['battery'],
+            'status': telemetry['status']
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/dock/set_location', methods=['POST'])
+def set_dock_location():
+    """Configure docking station coordinates"""
+    try:
+        data = request.get_json()
+        latitude = data.get('latitude')
+        longitude = data.get('longitude')
+        
+        if latitude is None or longitude is None:
+            return jsonify({
+                'success': False,
+                'error': 'Latitude and longitude required'
+            }), 400
+        
+        drone_state.set_dock_location(latitude, longitude)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Dock location updated',
+            'dock_location': {
+                'latitude': latitude,
+                'longitude': longitude
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/failure/status', methods=['GET'])
+def get_failure_status():
+    """Get failure handler status"""
+    try:
+        status = failure_handler.get_status()
+        return jsonify({
+            'success': True,
+            'status': status
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/failure/reset', methods=['POST'])
+def reset_failures():
+    """Manually reset all failure states"""
+    try:
+        failure_handler.reset_all()
+        return jsonify({
+            'success': True,
+            'message': 'All failure states reset'
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
