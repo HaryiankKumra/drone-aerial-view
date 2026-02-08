@@ -1,0 +1,13 @@
+[run]
+run = "gunicorn app:app --bind 0.0.0.0:5000 --workers 1 --threads 1 --timeout 120 --max-requests 50"
+
+[nix]
+channel = "stable-23_11"
+
+[deployment]
+run = ["gunicorn", "app:app", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "1", "--timeout", "120"]
+deploymentTarget = "cloudrun"
+
+[env]
+PYTHONUNBUFFERED = "1"
+TORCH_HOME = "/tmp/.torch"
