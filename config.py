@@ -3,7 +3,7 @@ Configuration file for aerial drone surveillance object detection
 """
 
 # Model settings
-MODEL_PATH = 'yolov8n-visdrone.pt'  # Pre-trained on VisDrone dataset for aerial/drone detection
+MODEL_PATH = 'yolov8s-visdrone.pt'  # Pre-trained on VisDrone dataset for aerial/drone detection
 CONF_THRESHOLD = 0.25  # Lower threshold for better detection of people and bikes
 # Mac M4 Neural Engine provides good acceleration
 

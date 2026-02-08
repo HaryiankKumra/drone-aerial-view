@@ -53,21 +53,7 @@ def is_same_object(bbox1, bbox2, class1, class2):
 
 # Load model once at startup
 print("Loading YOLOv8-VisDrone model...")
-try:
-    # Try loading local model first
-    if os.path.exists('yolov8n-visdrone.pt'):
-        model = YOLO('yolov8n-visdrone.pt')
-        print("✅ Loaded local model: yolov8n-visdrone.pt")
-    else:
-        # Fallback: Use Hugging Face or download from ultralytics
-        print("⚠️  Local model not found, downloading from Hugging Face...")
-        model = YOLO('mshamrai/yolov8s-visdrone')  # From Hugging Face Hub
-        print("✅ Loaded model from Hugging Face")
-except Exception as e:
-    print(f"⚠️  Failed to load visdrone model: {e}")
-    print("Using standard YOLOv8n as fallback...")
-    model = YOLO('yolov8n.pt')  # Ultralytics will auto-download
-    print("✅ Loaded fallback model: yolov8n.pt")
+model = YOLO('yolov8s-visdrone.pt')
 print("Model loaded successfully!")
 
 # Initialize drone state (simulated telemetry)
