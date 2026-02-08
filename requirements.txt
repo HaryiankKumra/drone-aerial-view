@@ -1,23 +1,28 @@
 # Campus Guardian Drone - Core Dependencies
 # Author: Haryiank Kumra
+# Python 3.11+ compatible
 
 # Web Framework
-Flask==3.0.0
-Flask-CORS==4.0.0
+Flask>=3.0.0
+Flask-CORS>=4.0.0
+Werkzeug>=3.0.0
 
 # Computer Vision & Machine Learning
-opencv-python==4.8.1.78
-ultralytics==8.1.0  # YOLOv8
-torch==2.1.0
-torchvision==0.16.0
-Pillow==10.1.0
+opencv-python-headless>=4.8.0  # Headless for server deployment
+ultralytics>=8.0.0  # YOLOv8
+torch>=2.0.0
+torchvision>=0.15.0
+Pillow>=10.0.0
 
 # Image Storage
-cloudinary==1.36.0
+cloudinary>=1.36.0
 
 # Data & Storage
-requests==2.31.0
-numpy==1.26.2
+requests>=2.31.0
+numpy>=1.24.0
 
 # Environment Variables
-python-dotenv==1.0.0
+python-dotenv>=1.0.0
+
+# Additional dependencies for Render deployment
+gunicorn>=21.0.0  # Production WSGI server
