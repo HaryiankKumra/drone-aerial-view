@@ -1,6 +1,6 @@
 {
   "total_patrol_time": 0,
-  "total_events_detected": 347,
+  "total_events_detected": 377,
   "total_violations": 0,
   "total_battery_cycles": 0,
   "total_charges_completed": 0,
@@ -9,5 +9,5 @@
   "camera_failures": 0,
   "model_failures": 0,
   "connection_failures": 0,
-  "last_updated": "2026-02-08T18:06:03.755280"
+  "last_updated": "2026-02-08T18:08:52.772757"
 }
